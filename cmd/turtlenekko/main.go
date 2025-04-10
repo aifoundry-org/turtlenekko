@@ -162,7 +162,7 @@ func main() {
 
 	// Initialize the logger before executing commands
 	cobra.OnInitialize(func() {
-		setupLogger(logLevel, os.Stdout)
+		setupLogger(logLevel, os.Stderr)
 	})
 
 	if err := rootCmd.Execute(); err != nil {
