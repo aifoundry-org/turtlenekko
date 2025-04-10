@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/aifoundry-org/turtlenekko/internal/benchmark"
 	// "github.com/aifoundry-org/turtlenekko/internal/types"
@@ -93,10 +94,76 @@ func FormatText(matrixResults []benchmark.MatrixResult) {
 }
 
 // FormatCSV formats benchmark results as CSV and prints to stdout
-// Currently not implemented - would print CSV to stdout
 func FormatCSV(matrixResults []benchmark.MatrixResult) {
-	// CSV format not implemented for stdout yet
-	fmt.Println("CSV format not implemented for stdout")
+	// Get all unique parameter keys with output:true
+	paramKeys := make(map[string]bool)
+	for _, result := range matrixResults {
+		for k, outputFlag := range result.OutputFlags {
+			if outputFlag {
+				paramKeys[k] = true
+			}
+		}
+	}
+
+	// Convert map to sorted slice for consistent output
+	var sortedParamKeys []string
+	for k := range paramKeys {
+		sortedParamKeys = append(sortedParamKeys, k)
+	}
+	sort.Strings(sortedParamKeys)
+
+	// Print CSV header
+	// First the parameter columns
+	for i, key := range sortedParamKeys {
+		if i > 0 {
+			fmt.Print(",")
+		}
+		fmt.Print(key)
+	}
+	
+	// Then the metrics columns
+	if len(sortedParamKeys) > 0 {
+		fmt.Print(",")
+	}
+	fmt.Println("prompt_rate_ms,prompt_rate_tokens_per_sec,completion_rate_ms,completion_rate_tokens_per_sec,r_squared")
+
+	// Print each result row
+	for _, result := range matrixResults {
+		if result.Error != nil {
+			continue // Skip rows with errors
+		}
+
+		// Print parameter values
+		for i, key := range sortedParamKeys {
+			if i > 0 {
+				fmt.Print(",")
+			}
+			// Get parameter value, empty string if not found
+			value := ""
+			if v, ok := result.Params[key]; ok {
+				value = v
+			}
+			fmt.Print(value)
+		}
+
+		// Print metrics
+		if len(sortedParamKeys) > 0 {
+			fmt.Print(",")
+		}
+		
+		promptRate := result.ModelFit.PromptRate
+		promptRateTokensPerSec := 1000.0 / promptRate
+		completionRate := result.ModelFit.CompletionRate
+		completionRateTokensPerSec := 1000.0 / completionRate
+		rSquared := result.ModelFit.RSquared
+
+		fmt.Printf("%.2f,%.2f,%.2f,%.2f,%.4f\n",
+			promptRate,
+			promptRateTokensPerSec,
+			completionRate,
+			completionRateTokensPerSec,
+			rSquared)
+	}
 }
 
 // WriteToFile writes detailed benchmark results to a log file
