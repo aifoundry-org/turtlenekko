@@ -22,7 +22,7 @@ all: test build
 
 build:
 	mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) -v ./cmd/turtlenekko
+	CGO_ENABLED=0 $(GOBUILD) -a -installsuffix cgo $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) -v ./cmd/turtlenekko
 
 test:
 	$(GOTEST) -v ./...
@@ -33,6 +33,15 @@ clean:
 deps:
 	$(GOMOD) tidy
 
+# Build static binaries for all supported platforms
+build-all:
+	@echo "Building static binaries for all platforms..."
+	@mkdir -p $(BUILD_DIR)/release
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_linux_amd64 ./cmd/turtlenekko
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_darwin_amd64 ./cmd/turtlenekko
+	@CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_windows_amd64.exe ./cmd/turtlenekko
+	@echo "Static binaries built successfully in $(BUILD_DIR)/release/"
+
 # Upload binary to GitHub Package Registry
 upload-github: build
 	@echo "Uploading $(BINARY_NAME) to GitHub Package Registry..."
@@ -42,8 +51,8 @@ upload-github: build
 	fi
 	@echo "Creating release assets..."
 	@mkdir -p $(BUILD_DIR)/release
-	@GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_linux_amd64 ./cmd/turtlenekko
-	@GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_darwin_amd64 ./cmd/turtlenekko
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_linux_amd64 ./cmd/turtlenekko
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GOBUILD) -a -installsuffix cgo $(LDFLAGS) -o $(BUILD_DIR)/release/$(BINARY_NAME)_darwin_amd64 ./cmd/turtlenekko
 	@echo "Uploading to GitHub..."
 	@curl -X POST \
 		-H "Authorization: token $(GITHUB_TOKEN)" \
