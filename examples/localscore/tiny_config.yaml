@@ -1,0 +1,16 @@
+# Turtlenekko Configuration for Llama-3.2-1B model
+driver: "local_cmd"
+
+matrix:
+  setup_cmd:
+    values: ["docker run -d --rm -p 8000:8000 -v $(pwd)/models:/models -e MODEL_PATH=/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf -e MODEL_ALIAS=llama --name nekko-api-benchmark ghcr.io/vidas/nekko-api:latest && sleep 5"]
+    output: false
+  teardown_cmd:
+    values: ["docker rm -f nekko-api-benchmark"]
+    output: false
+  url:
+    values: ["http://127.0.0.1:8000/v1/chat/completions"]
+    output: false
+  model:
+    values: ["llama"]
+    output: true

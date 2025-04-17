@@ -377,7 +377,7 @@ func fitCompletionTimeModel(results []*CompletionResult) *ModelFitResult {
 }
 
 // RunScalingBenchmark runs benchmarks with increasing prompt sizes and different max tokens
-func (b *Benchmark) RunScalingBenchmark(postfix string) ([]*CompletionResult, *ModelFitResult, error) {
+func (b *Benchmark) RunScalingBenchmark(postfix string) ([]*CompletionResult, *ModelFitResult, *ModelFitResult, error) {
 	slog.Info("Starting scaling benchmark", "component", "benchmark", "url", b.URL)
 
 	// Run a warmup request to initialize the model
@@ -389,26 +389,57 @@ func (b *Benchmark) RunScalingBenchmark(postfix string) ([]*CompletionResult, *M
 		slog.Info("Warmup request completed successfully", "component", "benchmark")
 	}
 
-	// Hardcoded parameters
-	promptLengths := []int{100, 1000}
-	maxTokensValues := []int{1, 1, 300, 300}
+	// Short context benchmarks
+	shortContextPromptLengths := []int{100, 500}
+	shortContextMaxTokens := []int{1, 1, 100, 100}
 
-	var results []*CompletionResult
+	// Long context benchmarks
+	longContextPromptLengths := []int{9000, 10000}
+	longContextMaxTokens := []int{1, 1, 100, 100}
 
-	// Run benchmarks with all combinations of prompt lengths and max tokens
-	for _, promptLength := range promptLengths {
-		for _, maxTokens := range maxTokensValues {
+	var allResults []*CompletionResult
+	var shortContextResults []*CompletionResult
+	var longContextResults []*CompletionResult
+
+	// Run short context benchmarks
+	slog.Info("Running short context benchmarks", "component", "benchmark")
+	for _, promptLength := range shortContextPromptLengths {
+		for _, maxTokens := range shortContextMaxTokens {
 			result, err := b.RunWithPromptLength(promptLength, maxTokens, postfix)
 
 			if err != nil {
-				slog.Error("Benchmark configuration failed",
+				slog.Error("Short context benchmark failed",
 					"component", "benchmark",
 					"prompt_length", promptLength,
 					"max_tokens", maxTokens,
 					"error", err)
 			} else {
 				// Add successful result
-				results = append(results, result)
+				shortContextResults = append(shortContextResults, result)
+				allResults = append(allResults, result)
+			}
+
+			// Small delay between requests to avoid overwhelming the server
+			time.Sleep(1000 * time.Millisecond)
+		}
+	}
+
+	// Run long context benchmarks
+	slog.Info("Running long context benchmarks", "component", "benchmark")
+	for _, promptLength := range longContextPromptLengths {
+		for _, maxTokens := range longContextMaxTokens {
+			result, err := b.RunWithPromptLength(promptLength, maxTokens, postfix)
+
+			if err != nil {
+				slog.Error("Long context benchmark failed",
+					"component", "benchmark",
+					"prompt_length", promptLength,
+					"max_tokens", maxTokens,
+					"error", err)
+			} else {
+				// Add successful result
+				longContextResults = append(longContextResults, result)
+				allResults = append(allResults, result)
 			}
 
 			// Small delay between requests to avoid overwhelming the server
@@ -417,46 +448,55 @@ func (b *Benchmark) RunScalingBenchmark(postfix string) ([]*CompletionResult, *M
 	}
 
 	// Check if all benchmarks failed
-	allFailed := true
-	for _, r := range results {
-		if r != nil {
-			allFailed = false
-			break
-		}
+	if len(shortContextResults) == 0 && len(longContextResults) == 0 {
+		return allResults, nil, nil, fmt.Errorf("all benchmark configurations failed")
 	}
 
-	if allFailed {
-		return results, nil, fmt.Errorf("all benchmark configurations failed")
+	// Create model fit results
+	var shortContextModelFit *ModelFitResult
+	var longContextModelFit *ModelFitResult
+
+	// Fit the completion time model to the data for short context if we have results
+	if len(shortContextResults) > 0 {
+		shortContextModelFit = fitCompletionTimeModel(shortContextResults)
 	}
 
-	// Fit the completion time model to the data
-	modelFit := fitCompletionTimeModel(results)
+	// Fit the completion time model to the data for long context if we have results
+	if len(longContextResults) > 0 {
+		longContextModelFit = fitCompletionTimeModel(longContextResults)
+	}
 
 	slog.Info("Scaling benchmark completed",
 		"component", "benchmark",
-		"configurations", len(results),
-		"prompt_rate_ms", modelFit.PromptRate,
-		"completion_rate_ms", modelFit.CompletionRate,
-		"r_squared", modelFit.RSquared)
+		"short_context_configs", len(shortContextResults),
+		"long_context_configs", len(longContextResults),
+		"short_prompt_tokens_per_sec", math.Round((1000.0/shortContextModelFit.PromptRate)*100)/100,
+		"short_completion_tokens_per_sec", math.Round((1000.0/shortContextModelFit.CompletionRate)*100)/100,
+		"short_r_squared", math.Round(shortContextModelFit.RSquared*100)/100,
+		"long_prompt_tokens_per_sec", math.Round((1000.0/longContextModelFit.PromptRate)*100)/100,
+		"long_completion_tokens_per_sec", math.Round((1000.0/longContextModelFit.CompletionRate)*100)/100,
+		"long_r_squared", math.Round(longContextModelFit.RSquared*100)/100)
 
-	return results, modelFit, nil
+	return allResults, shortContextModelFit, longContextModelFit, nil
 }
 
 // MatrixResult contains benchmark results along with the driver parameters used
 type MatrixResult struct {
-	Params      map[string]string
-	OutputFlags map[string]bool
-	Results     []*CompletionResult
-	ModelFit    *ModelFitResult
-	Error       error
+	Params               map[string]string
+	OutputFlags          map[string]bool
+	Results              []*CompletionResult
+	ShortContextModelFit *ModelFitResult
+	LongContextModelFit  *ModelFitResult
+	LocalScore           *float64
+	Error                error
 }
 
 // Run is a package-level function that runs a scaling benchmark with a provided driver
-func Run(d driver.Driver, driverParams map[string]interface{}) ([]*CompletionResult, *ModelFitResult, error) {
+func Run(d driver.Driver, driverParams map[string]interface{}) ([]*CompletionResult, *ModelFitResult, *ModelFitResult, error) {
 	// Setup driver if provided
 	if d != nil {
 		if err := d.Setup(driverParams); err != nil {
-			return nil, nil, fmt.Errorf("driver setup failed: %v", err)
+			return nil, nil, nil, fmt.Errorf("driver setup failed: %v", err)
 		}
 		defer d.Teardown()
 	}
@@ -523,15 +563,24 @@ func RunMatrix(driverType string, baseParams map[string]interface{}, matrix map[
 		}
 
 		// Run benchmark with this parameter set
-		results, modelFit, err := Run(d, params)
+		results, shortContextModelFit, longContextModelFit, err := Run(d, params)
+
+		// Calculate LocalScore
+		var localScore *float64
+		if shortContextModelFit != nil || longContextModelFit != nil {
+			modelFits := []*ModelFitResult{shortContextModelFit, longContextModelFit}
+			localScore = Calculate(modelFits)
+		}
 
 		// Store results with parameter set
 		matrixResult := MatrixResult{
-			Params:      paramSet,
-			OutputFlags: outputFlags,
-			Results:     results,
-			ModelFit:    modelFit,
-			Error:       err,
+			Params:               paramSet,
+			OutputFlags:          outputFlags,
+			Results:              results,
+			ShortContextModelFit: shortContextModelFit,
+			LongContextModelFit:  longContextModelFit,
+			LocalScore:           localScore,
+			Error:                err,
 		}
 
 		matrixResults = append(matrixResults, matrixResult)

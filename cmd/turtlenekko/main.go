@@ -54,11 +54,12 @@ func main() {
 	var resultsLogPath string
 	var outputFormat string
 	var logLevel string
+	var showLocalScore bool
 
 	rootCmd := &cobra.Command{
 		Use:   "turtlenekko",
 		Short: "Turtlenekko - LLM Performance Measurement Tool",
-		Long:  "A tool for measuring performance of local LLMs using chat completion endpoints",
+		Long:  "A tool for measuring performance of local LLMs using OpenAI API compatible chat completion endpoints",
 	}
 
 	initCmd := &cobra.Command{
@@ -121,20 +122,20 @@ func main() {
 			// Format and print results based on the selected format
 			switch outputFormat {
 			case "json":
-				if err := formatter.FormatJSON(matrixResults); err != nil {
+				if err := formatter.FormatJSON(matrixResults, showLocalScore); err != nil {
 					slog.Error("Error formatting JSON", "error", err)
 				}
 			case "text":
-				formatter.FormatText(matrixResults)
+				formatter.FormatText(matrixResults, showLocalScore)
 			case "csv":
-				formatter.FormatCSV(matrixResults)
+				formatter.FormatCSV(matrixResults, showLocalScore)
 			default:
 				slog.Warn("Unknown format, using text format", "format", outputFormat)
-				formatter.FormatText(matrixResults)
+				formatter.FormatText(matrixResults, showLocalScore)
 			}
 
 			// Always write detailed results to the log file
-			formatter.WriteToFile(resultsFile, matrixResults)
+			formatter.WriteToFile(resultsFile, matrixResults, showLocalScore)
 
 			slog.Info("Results have been saved", "path", resultsLogPath)
 		},
@@ -147,6 +148,7 @@ func main() {
 	benchmarkCmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to configuration file")
 	benchmarkCmd.Flags().StringVarP(&resultsLogPath, "results", "r", "results.log", "Path to results log file")
 	benchmarkCmd.Flags().StringVarP(&outputFormat, "format", "f", "json", "Output format (csv, text, json)")
+	benchmarkCmd.Flags().BoolVar(&showLocalScore, "localscore", true, "Include estimated LocalScore in output")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",
