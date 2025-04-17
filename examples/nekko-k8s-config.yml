@@ -1,0 +1,8 @@
+driver: "dummy"
+matrix:
+  url:
+    values: ["http://localhost:3090/v1/chat/completions"]
+    output: false
+  model:
+    values: ["smol"]
+    output: true

@@ -1,0 +1,121 @@
+name: Nekko Minikube Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      go_version:
+        description: 'Go version to use'
+        required: true
+        default: '1.24'
+        type: string
+      kubernetes_version:
+        description: 'Kubernetes version for Minikube'
+        required: true
+        default: 'v1.28.3'
+        type: string
+      benchmark_config:
+        description: 'Benchmark configuration file'
+        required: true
+        default: 'examples/nekko-k8s-config.yml'
+        type: string
+
+jobs:
+  nekko-minikube:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.HUGGINGFACE_TOKEN }}" ]; then
+            echo "Error: HUGGINGFACE_TOKEN secret is required but not set"
+            exit 1
+          fi
+          echo "All required secrets are set"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ github.event.inputs.go_version }}
+      
+      - name: Build Turtlenekko
+        run: make build
+      
+      - name: Setup Minikube
+        uses: medyagh/setup-minikube@master
+        with:
+          minikube-version: latest
+          kubernetes-version: ${{ github.event.inputs.kubernetes_version }}
+          driver: docker
+          start-args: '--memory=4g --cpus=2'
+      
+      - name: Get Kubernetes context
+        run: |
+          kubectl config use-context minikube
+          kubectl get nodes
+          kubectl get pods -A
+      
+      - name: Deploy nekko cluster
+        run: |
+          kubectl apply -f examples/nekko-k8s/
+      
+      - name: Wait for deployment to be ready
+        run: |
+          # Wait for the deployment to be ready
+          echo "Waiting for services to be ready..."
+          sleep 30
+          # Is load balancer ready?
+          kubectl get svc
+          kubectl get pod -o wide
+
+      - name: Port forward Nekko Load Balancer service
+        run: |
+          # Start port forwarding in the background
+          kubectl port-forward svc/nekko-lb-svc 3090:3090 &
+          # Save the PID to kill it later
+          echo $! > port-forward.pid
+          # Wait for port forwarding to establish
+          sleep 10
+      
+      - name: Start worker node (with model)
+        run: |
+          # Use -f to fail on HTTP errors, -s for silent mode, and -S to show errors
+          # Use -o /dev/null to discard output but -w to get HTTP status code
+          HTTP_STATUS=$(curl -H "Authorization: Bearer nekko-admin-token" \
+            -X POST --data '{"modelUrl": "hf:///unsloth//SmolLM2-135M-Instruct-GGUF/SmolLM2-135M-Instruct-Q4_K_M.gguf", "modelAlias": "smol", "nodeName": "minikube", "credentials": "${{ secrets.HUGGINGFACE_TOKEN }}"}' \
+            -s -S -o /dev/null -w "%{http_code}" \
+            http://localhost:3090/api/v1/workers)
+          
+          # Check if status code is 200
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: Worker node creation failed with HTTP status $HTTP_STATUS"
+            exit 1
+          fi
+          
+          echo "Worker node created successfully with HTTP status $HTTP_STATUS"
+          # Worker is running, just wait for the model to load
+          sleep 10
+      
+      - name: Run Turtlenekko benchmark
+        run: |
+          # Run Turtlenekko with dummy driver against the port-forwarded service
+          ./build/turtlenekko benchmark --config ${{ github.event.inputs.benchmark_config }} --format json > benchmark-results.json
+      
+      - name: Clean up port forwarding
+        if: always()
+        run: |
+          if [ -f port-forward.pid ]; then
+            kill $(cat port-forward.pid) || true
+            rm port-forward.pid
+          fi
+      
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: minikube-benchmark-results
+          path: |
+            *.log
+            *.json
+          retention-days: 7

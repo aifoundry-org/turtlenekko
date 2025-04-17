@@ -1,0 +1,52 @@
+name: LocalScore Minimal Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      go_version:
+        description: 'Go version to use'
+        required: true
+        default: '1.24'
+        type: string
+
+jobs:
+  build-and-benchmark:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ github.event.inputs.go_version }}
+      
+      - name: Build Turtlenekko
+        run: make build
+      
+      - name: Install Docker
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Pull Nekko API image
+        run: docker pull ghcr.io/vidas/nekko-api:latest
+      
+      - name: Cache models directory
+        uses: actions/cache@v3
+        with:
+          path: models
+          key: models-minimal-${{ hashFiles('examples/localscore/minimal_config.yaml') }}
+          restore-keys: |
+            models-minimal-
+      
+      - name: Run LocalScore Minimal Benchmark
+        run: make localscore-minimal
+      
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            *.log
+            *.json
+          retention-days: 7

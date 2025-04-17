@@ -89,11 +89,13 @@ create-release:
 TINY_URL := "https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
 SMALL_URL := "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
 MEDIUM_URL := "https://huggingface.co/lmstudio-community/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf"
+MINIMAL_URL := "https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf"
 
 # Model filenames
 TINY_MODEL := models/Llama-3.2-1B-Instruct-Q4_K_M.gguf
 SMALL_MODEL := models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf
 MEDIUM_MODEL := models/Qwen2.5-14B-Instruct-Q4_K_M.gguf
+MINIMAL_MODEL := models/SmolLM2-135M-Instruct-Q4_K_M.gguf
 
 # Create models directory
 $(shell mkdir -p models)
@@ -113,6 +115,11 @@ localscore-medium: $(TURTLENEKKO) $(MEDIUM_MODEL)
 	@echo "Running LocalScore benchmark for Qwen2.5-14B model..."
 	@$(TURTLENEKKO) benchmark --config examples/localscore/medium_config.yaml --localscore true --format text
 
+.PHONY: localscore-minimal
+localscore-minimal: $(TURTLENEKKO) $(MINIMAL_MODEL)
+	@echo "Running LocalScore benchmark for SmolLM2-135M model..."
+	@$(TURTLENEKKO) benchmark --config examples/localscore/minimal_config.yaml --localscore true --format text
+
 .PHONY: localscore-clean
 localscore-clean:
 	@echo "Removing downloaded models..."
@@ -130,3 +137,7 @@ $(SMALL_MODEL):
 $(MEDIUM_MODEL):
 	@echo "Downloading medium model (Qwen2.5-14B)..."
 	@curl -L $(MEDIUM_URL) -o $(MEDIUM_MODEL)
+
+$(MINIMAL_MODEL):
+	@echo "Downloading minimal model (SmolLM2-135M)..."
+	@curl -L $(MINIMAL_URL) -o $(MINIMAL_MODEL)
