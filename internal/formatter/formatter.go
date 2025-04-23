@@ -14,10 +14,12 @@ import (
 type JsonResult struct {
 	Params                             map[string]string `json:"params"`
 	ShortContextPromptTokensPerSec     float64           `json:"short_context_prompt_tokens_per_sec"`
+	ShortContextCachedPromptTokensPerSec float64         `json:"short_context_cached_prompt_tokens_per_sec"`
 	ShortContextCompletionTokensPerSec float64           `json:"short_context_completion_tokens_per_sec"`
 	ShortContextRSquared               float64           `json:"short_context_r_squared"`
 
 	LongContextPromptTokensPerSec     float64 `json:"long_context_prompt_tokens_per_sec"`
+	LongContextCachedPromptTokensPerSec float64 `json:"long_context_cached_prompt_tokens_per_sec"`
 	LongContextCompletionTokensPerSec float64 `json:"long_context_completion_tokens_per_sec"`
 	LongContextRSquared               float64 `json:"long_context_r_squared"`
 
@@ -52,6 +54,11 @@ func FormatJSON(matrixResults []benchmark.MatrixResult, showLocalScore bool) err
 				if shortPromptRate > 0 {
 					result.ShortContextPromptTokensPerSec = math.Round((1000.0/shortPromptRate)*100) / 100
 				}
+				
+				shortCachedPromptRate := matrixResult.ShortContextModelFit.CachedPromptRate
+				if shortCachedPromptRate > 0 {
+					result.ShortContextCachedPromptTokensPerSec = math.Round((1000.0/shortCachedPromptRate)*100) / 100
+				}
 
 				shortCompletionRate := matrixResult.ShortContextModelFit.CompletionRate
 				if shortCompletionRate > 0 {
@@ -66,6 +73,11 @@ func FormatJSON(matrixResults []benchmark.MatrixResult, showLocalScore bool) err
 				longPromptRate := matrixResult.LongContextModelFit.PromptRate
 				if longPromptRate > 0 {
 					result.LongContextPromptTokensPerSec = math.Round((1000.0/longPromptRate)*100) / 100
+				}
+				
+				longCachedPromptRate := matrixResult.LongContextModelFit.CachedPromptRate
+				if longCachedPromptRate > 0 {
+					result.LongContextCachedPromptTokensPerSec = math.Round((1000.0/longCachedPromptRate)*100) / 100
 				}
 
 				longCompletionRate := matrixResult.LongContextModelFit.CompletionRate
@@ -118,6 +130,7 @@ func FormatText(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 		fmt.Printf("\nShort Context Results:\n")
 		if matrixResult.ShortContextModelFit != nil {
 			shortPromptRate := matrixResult.ShortContextModelFit.PromptRate
+			shortCachedPromptRate := matrixResult.ShortContextModelFit.CachedPromptRate
 			shortCompletionRate := matrixResult.ShortContextModelFit.CompletionRate
 
 			if shortPromptRate > 0 {
@@ -125,6 +138,13 @@ func FormatText(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 					math.Round((1000.0/shortPromptRate)*100)/100)
 			} else {
 				fmt.Printf("  Prompt processing: No data\n")
+			}
+			
+			if shortCachedPromptRate > 0 {
+				fmt.Printf("  Cached prompt processing: %.2f tokens/sec\n",
+					math.Round((1000.0/shortCachedPromptRate)*100)/100)
+			} else {
+				fmt.Printf("  Cached prompt processing: No data\n")
 			}
 
 			if shortCompletionRate > 0 {
@@ -144,6 +164,7 @@ func FormatText(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 		fmt.Printf("\nLong Context Results:\n")
 		if matrixResult.LongContextModelFit != nil {
 			longPromptRate := matrixResult.LongContextModelFit.PromptRate
+			longCachedPromptRate := matrixResult.LongContextModelFit.CachedPromptRate
 			longCompletionRate := matrixResult.LongContextModelFit.CompletionRate
 
 			if longPromptRate > 0 {
@@ -151,6 +172,13 @@ func FormatText(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 					math.Round((1000.0/longPromptRate)*100)/100)
 			} else {
 				fmt.Printf("  Prompt processing: No data\n")
+			}
+			
+			if longCachedPromptRate > 0 {
+				fmt.Printf("  Cached prompt processing: %.2f tokens/sec\n",
+					math.Round((1000.0/longCachedPromptRate)*100)/100)
+			} else {
+				fmt.Printf("  Cached prompt processing: No data\n")
 			}
 
 			if longCompletionRate > 0 {
@@ -206,8 +234,10 @@ func FormatCSV(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 		fmt.Print(",")
 	}
 	header := "short_context_prompt_tokens_per_sec," +
+		"short_context_cached_prompt_tokens_per_sec," +
 		"short_context_completion_tokens_per_sec,short_context_r_squared," +
 		"long_context_prompt_tokens_per_sec," +
+		"long_context_cached_prompt_tokens_per_sec," +
 		"long_context_completion_tokens_per_sec,long_context_r_squared"
 
 	if showLocalScore {
@@ -242,12 +272,17 @@ func FormatCSV(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 
 		// Short context metrics
 		shortPromptRateTokensPerSec := 0.0
+		shortCachedPromptRateTokensPerSec := 0.0
 		shortCompletionRateTokensPerSec := 0.0
 		shortRSquared := 0.0
 
 		if result.ShortContextModelFit != nil {
 			if result.ShortContextModelFit.PromptRate > 0 {
 				shortPromptRateTokensPerSec = math.Round((1000.0/result.ShortContextModelFit.PromptRate)*100) / 100
+			}
+			
+			if result.ShortContextModelFit.CachedPromptRate > 0 {
+				shortCachedPromptRateTokensPerSec = math.Round((1000.0/result.ShortContextModelFit.CachedPromptRate)*100) / 100
 			}
 
 			if result.ShortContextModelFit.CompletionRate > 0 {
@@ -259,12 +294,17 @@ func FormatCSV(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 
 		// Long context metrics
 		longPromptRateTokensPerSec := 0.0
+		longCachedPromptRateTokensPerSec := 0.0
 		longCompletionRateTokensPerSec := 0.0
 		longRSquared := 0.0
 
 		if result.LongContextModelFit != nil {
 			if result.LongContextModelFit.PromptRate > 0 {
 				longPromptRateTokensPerSec = math.Round((1000.0/result.LongContextModelFit.PromptRate)*100) / 100
+			}
+			
+			if result.LongContextModelFit.CachedPromptRate > 0 {
+				longCachedPromptRateTokensPerSec = math.Round((1000.0/result.LongContextModelFit.CachedPromptRate)*100) / 100
 			}
 
 			if result.LongContextModelFit.CompletionRate > 0 {
@@ -275,11 +315,13 @@ func FormatCSV(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 		}
 
 		// Format the output
-		output := fmt.Sprintf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
+		output := fmt.Sprintf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
 			shortPromptRateTokensPerSec,
+			shortCachedPromptRateTokensPerSec,
 			shortCompletionRateTokensPerSec,
 			shortRSquared,
 			longPromptRateTokensPerSec,
+			longCachedPromptRateTokensPerSec,
 			longCompletionRateTokensPerSec,
 			longRSquared)
 
@@ -319,6 +361,7 @@ func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLoca
 		fmt.Fprintf(file, "\nShort Context Results:\n")
 		if matrixResult.ShortContextModelFit != nil {
 			shortPromptRate := matrixResult.ShortContextModelFit.PromptRate
+			shortCachedPromptRate := matrixResult.ShortContextModelFit.CachedPromptRate
 			shortCompletionRate := matrixResult.ShortContextModelFit.CompletionRate
 
 			if shortPromptRate > 0 {
@@ -326,6 +369,13 @@ func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLoca
 					math.Round((1000.0/shortPromptRate)*100)/100)
 			} else {
 				fmt.Fprintf(file, "  Prompt processing: No data\n")
+			}
+			
+			if shortCachedPromptRate > 0 {
+				fmt.Fprintf(file, "  Cached prompt processing: %.2f tokens/sec\n",
+					math.Round((1000.0/shortCachedPromptRate)*100)/100)
+			} else {
+				fmt.Fprintf(file, "  Cached prompt processing: No data\n")
 			}
 
 			if shortCompletionRate > 0 {
@@ -345,6 +395,7 @@ func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLoca
 		fmt.Fprintf(file, "\nLong Context Results:\n")
 		if matrixResult.LongContextModelFit != nil {
 			longPromptRate := matrixResult.LongContextModelFit.PromptRate
+			longCachedPromptRate := matrixResult.LongContextModelFit.CachedPromptRate
 			longCompletionRate := matrixResult.LongContextModelFit.CompletionRate
 
 			if longPromptRate > 0 {
@@ -352,6 +403,13 @@ func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLoca
 					math.Round((1000.0/longPromptRate)*100)/100)
 			} else {
 				fmt.Fprintf(file, "  Prompt processing: No data\n")
+			}
+			
+			if longCachedPromptRate > 0 {
+				fmt.Fprintf(file, "  Cached prompt processing: %.2f tokens/sec\n",
+					math.Round((1000.0/longCachedPromptRate)*100)/100)
+			} else {
+				fmt.Fprintf(file, "  Cached prompt processing: No data\n")
 			}
 
 			if longCompletionRate > 0 {
@@ -369,7 +427,7 @@ func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLoca
 		}
 
 		// Print CSV header
-		fmt.Fprintf(file, "context,prompt_tokens,completion_tokens,response_time_ms\n")
+		fmt.Fprintf(file, "context,prompt_tokens,cached_prompt_tokens,completion_tokens,response_time_ms\n")
 
 		// Print results as CSV
 		for _, result := range matrixResult.Results {
@@ -382,14 +440,15 @@ func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLoca
 
 			// Determine if this is a short or long context result
 			contextType := "short"
-			if result.PromptTokens > 1000 {
+			if result.PromptTokens > 1000 || result.CachedPromptTokens > 1000 {
 				contextType = "long"
 			}
 
 			// Output as CSV
-			fmt.Fprintf(file, "%s,%d,%d,%d\n",
+			fmt.Fprintf(file, "%s,%d,%d,%d,%d\n",
 				contextType,
 				result.PromptTokens,
+				result.CachedPromptTokens,
 				result.CompletionTokens,
 				responseTimeMs)
 		}

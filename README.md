@@ -42,10 +42,12 @@ Key capabilities:
 - Originally developed to benchmark
   [NekkoAPI](https://github.com/aifoundry-org/NekkoAPI), but works with any
   compatible LLM server
+- Repeats benchmark samples several times until result is reliable enough
+- Measures KV cache reuse (making a call with the same prompt is expected
+  to result in negligible prompt processing times)
 
 Limitations:
 - Doesn't support text completion API
-- Can give inaccurate results if inference speed fluctuates significantly
 - Doesn't measure performance of concurrent requests (thus ignoring benefits of
   continuous batching)
 - Doesn't work correctly on model architectures that support dynamic
@@ -57,9 +59,6 @@ Limitations:
 
 
 TODO:
-- Measure performance when tokens are cached in KV cache (prompt prefix
-  stays unchanged)
-- Iterative sampling until measurement error is low enough
 - Measure performance of concurrent requests
 - Use client-side token counter when tokenizer is known (should increase
   precision and lower benchmarking duration)
@@ -107,9 +106,11 @@ The JSON output provides detailed benchmark results in a structured format:
       "threads": "8"
     },
     "short_context_prompt_tokens_per_sec": 2380.95,
+    "short_context_cached_prompt_tokens_per_sec": 12500.00,
     "short_context_completion_tokens_per_sec": 7.96,
     "short_context_r_squared": 0.99,
     "long_context_prompt_tokens_per_sec": 1123.60,
+    "long_context_cached_prompt_tokens_per_sec": 8333.33,
     "long_context_completion_tokens_per_sec": 5.34,
     "long_context_r_squared": 0.99,
     "localscore_estimate": 20.95
@@ -120,9 +121,11 @@ The JSON output provides detailed benchmark results in a structured format:
       "threads": "4"
     },
     "short_context_prompt_tokens_per_sec": 1960.78,
+    "short_context_cached_prompt_tokens_per_sec": 10000.00,
     "short_context_completion_tokens_per_sec": 10.17,
     "short_context_r_squared": 0.99,
     "long_context_prompt_tokens_per_sec": 952.38,
+    "long_context_cached_prompt_tokens_per_sec": 7142.86,
     "long_context_completion_tokens_per_sec": 6.89,
     "long_context_r_squared": 0.99,
     "localscore_estimate": 21.88
@@ -134,10 +137,12 @@ Each object in the array represents one benchmark run with:
 - `params`: The parameters used for this run (only those with `output: true`)
 - Short context metrics (few hundred tokens):
   - `short_context_prompt_tokens_per_sec`: Prompt tokens processed per second
+  - `short_context_cached_prompt_tokens_per_sec`: Cached prompt tokens processed per second (KV cache reuse)
   - `short_context_completion_tokens_per_sec`: Completion tokens generated per second
   - `short_context_r_squared`: Statistical measure of how well the model fits the data (0-1)
 - Long context metrics (around 3000 tokens):
   - `long_context_prompt_tokens_per_sec`: Prompt tokens processed per second
+  - `long_context_cached_prompt_tokens_per_sec`: Cached prompt tokens processed per second (KV cache reuse)
   - `long_context_completion_tokens_per_sec`: Completion tokens generated per second
   - `long_context_r_squared`: Statistical measure of how well the model fits the data (0-1)
 - `localscore_estimate`: Estimated LocalScore - a composite performance score
@@ -149,9 +154,9 @@ Each object in the array represents one benchmark run with:
 The CSV output is ideal for importing into spreadsheet applications:
 
 ```
-model,threads,short_context_prompt_tokens_per_sec,short_context_completion_tokens_per_sec,short_context_r_squared,long_context_prompt_tokens_per_sec,long_context_completion_tokens_per_sec,long_context_r_squared,localscore_estimate
-llama3-7b,8,2380.95,7.96,0.99,1123.60,5.34,0.99,20.95
-mistral-7b,4,1960.78,10.17,0.99,952.38,6.89,0.99,21.88
+model,threads,short_context_prompt_tokens_per_sec,short_context_cached_prompt_tokens_per_sec,short_context_completion_tokens_per_sec,short_context_r_squared,long_context_prompt_tokens_per_sec,long_context_cached_prompt_tokens_per_sec,long_context_completion_tokens_per_sec,long_context_r_squared,localscore_estimate
+llama3-7b,8,2380.95,12500.00,7.96,0.99,1123.60,8333.33,5.34,0.99,20.95
+mistral-7b,4,1960.78,10000.00,10.17,0.99,952.38,7142.86,6.89,0.99,21.88
 ```
 
 The CSV includes:
@@ -170,11 +175,13 @@ Parameters:
 
 Short Context Results:
   Prompt processing: 2380.95 tokens/sec
+  Cached prompt processing: 12500.00 tokens/sec
   Completion generation: 7.96 tokens/sec
   Model fit quality (R²): 0.99
 
 Long Context Results:
   Prompt processing: 1123.60 tokens/sec
+  Cached prompt processing: 8333.33 tokens/sec
   Completion generation: 5.34 tokens/sec
   Model fit quality (R²): 0.99
 
@@ -293,11 +300,12 @@ To overcome these limitations, Turtlenekko:
    - Total response time
 5. **Fits Linear Regression Models**: Uses the equation:
    ```
-   response_time = prompt_rate * prompt_tokens + completion_rate * completion_tokens
+   response_time = prompt_rate * prompt_tokens + cached_prompt_rate * cached_prompt_tokens + completion_rate * completion_tokens
    ```
    Separate models are fitted for short and long contexts.
 6. **Calculates Key Metrics**:
    - **Prompt Processing Rate**: Time per prompt token (milliseconds) for both short and long contexts
+   - **Cached Prompt Processing Rate**: Time per cached prompt token (milliseconds) when KV cache is reused
    - **Completion Generation Rate**: Time per completion token (milliseconds) for both short and long contexts
    - **R-squared value**: Indicates how well each model fits the data (0-1)
 

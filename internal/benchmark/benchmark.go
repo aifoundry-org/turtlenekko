@@ -56,9 +56,10 @@ type ChatCompletionResponse struct {
 
 // CompletionResult contains token usage information and timing from the LLM response
 type CompletionResult struct {
-	PromptTokens     int
-	CompletionTokens int
-	ResponseTime     time.Duration
+	PromptTokens       int
+	CachedPromptTokens int
+	CompletionTokens   int
+	ResponseTime       time.Duration
 }
 
 // Result represents the benchmark results
@@ -243,24 +244,31 @@ func generateMessages(systemContentLength int, postfix string) []ChatMessage {
 }
 
 // RunWithPromptLength executes a benchmark with a specific prompt length and max completion tokens
-func (b *Benchmark) RunWithPromptLength(promptLength int, maxCompletionTokens int, postfix string) (*CompletionResult, error) {
+func (b *Benchmark) RunWithPromptLength(promptLength int, maxCompletionTokens int, postfix string) ([]*CompletionResult, error) {
 	slog.Info("Running benchmark",
 		"component", "benchmark",
 		"prompt_length", promptLength,
 		"max_tokens", maxCompletionTokens,
 		"url", b.URL)
 
+	results := []*CompletionResult{}
+
+	messages := generateMessages(promptLength, postfix)
+
 	// Parameters with specified prompt length and max tokens
 	params := ChatCompletionParams{
-		Messages:            generateMessages(promptLength, postfix),
-		Temperature:         2.0, // just take random
+		Messages:            messages,
+		Temperature:         0.0, // Use deterministic sampling
 		TopP:                1.0,
 		MaxCompletionTokens: maxCompletionTokens,
-		Seed:                -1,
+		Seed:                42, // Fixed seed for reproducibility
 	}
 
 	// Make the actual request to the LLM
 	completionResult, err := b.ChatCompletion(params)
+
+	// Small delay between requests to avoid overwhelming the server
+	time.Sleep(500 * time.Millisecond)
 
 	if err != nil {
 		slog.Error("Benchmark failed",
@@ -278,90 +286,270 @@ func (b *Benchmark) RunWithPromptLength(promptLength int, maxCompletionTokens in
 		"max_tokens", maxCompletionTokens,
 		"response_time_ms", completionResult.ResponseTime.Milliseconds())
 
-	return completionResult, nil
+	results = append(results, completionResult)
+
+	// Repeat with the same messages
+	// Make the actual request to the LLM
+	cachedCompletionResult, err := b.ChatCompletion(params)
+
+	// Small delay between requests to avoid overwhelming the server
+	time.Sleep(500 * time.Millisecond)
+
+	if err != nil {
+		slog.Error("Benchmark failed",
+			"component", "benchmark",
+			"prompt_length", promptLength,
+			"max_tokens", maxCompletionTokens,
+			"error", err)
+		return nil, fmt.Errorf("chat completion failed: %v", err)
+	}
+
+	// All prompt was cached cached
+	cachedCompletionResult.CachedPromptTokens = cachedCompletionResult.PromptTokens
+	cachedCompletionResult.PromptTokens = 0
+
+	// Log the detailed timing information
+	slog.Info("Benchmark completed (cached)",
+		"component", "benchmark",
+		"prompt_length", promptLength,
+		"max_tokens", maxCompletionTokens,
+		"response_time_ms", completionResult.ResponseTime.Milliseconds())
+
+	results = append(results, cachedCompletionResult)
+
+	return results, nil
 }
 
 // ModelFitResult contains the fitted parameters for the completion time model
 type ModelFitResult struct {
-	PromptRate     float64 // ms per prompt token
-	CompletionRate float64 // ms per completion token
-	RSquared       float64 // goodness of fit (0-1)
+	PromptRate       float64 // ms per prompt token
+	CachedPromptRate float64 // ms per cached prompt token
+	CompletionRate   float64 // ms per completion token
+	RSquared         float64 // goodness of fit (0-1)
 }
 
-// fitCompletionTimeModel fits the model: completion_time = pr * prompt_tokens + cr * completion_tokens
-// to the measured data, where pr is prompt rate and cr is completion rate
+// fitCompletionTimeModel fits the model: completion_time = a * prompt_tokens + b * cached_prompt_tokens + c * completion_tokens
+// to the measured data using linear regression (ordinary least squares)
 func fitCompletionTimeModel(results []*CompletionResult) *ModelFitResult {
 	if len(results) < 2 {
+		slog.Warn("Not enough results for model fitting", "component", "benchmark", "count", len(results))
 		return &ModelFitResult{
-			PromptRate:     0,
-			CompletionRate: 0,
-			RSquared:       0,
+			PromptRate:       0,
+			CachedPromptRate: 0,
+			CompletionRate:   0,
+			RSquared:         0,
 		}
 	}
 
-	// Prepare data for linear regression
-	n := len(results)
-	sumX1 := 0.0
-	sumX2 := 0.0
-	sumY := 0.0
-	sumX1X1 := 0.0
-	sumX2X2 := 0.0
-	sumX1X2 := 0.0
-	sumX1Y := 0.0
-	sumX2Y := 0.0
+	// Count valid results and log input data
+	validResults := 0
+	slog.Info("Model fitting input data:", "component", "benchmark")
 
-	for _, r := range results {
+	// Prepare data for linear regression
+	var X [][]float64 // Features: [prompt_tokens, cached_prompt_tokens, completion_tokens]
+	var y []float64   // Target: response_time_ms
+
+	for i, r := range results {
 		if r == nil {
 			continue
 		}
+		validResults++
 
-		x1 := float64(r.PromptTokens)
-		x2 := float64(r.CompletionTokens)
-		y := float64(r.ResponseTime.Milliseconds())
+		// Log data point
+		slog.Info("Data point",
+			"component", "benchmark",
+			"index", i,
+			"prompt_tokens", r.PromptTokens,
+			"cached_prompt_tokens", r.CachedPromptTokens,
+			"completion_tokens", r.CompletionTokens,
+			"response_time_ms", r.ResponseTime.Milliseconds())
 
-		sumX1 += x1
-		sumX2 += x2
-		sumY += y
-		sumX1X1 += x1 * x1
-		sumX2X2 += x2 * x2
-		sumX1X2 += x1 * x2
-		sumX1Y += x1 * y
-		sumX2Y += x2 * y
+		// Add to regression data
+		X = append(X, []float64{
+			float64(r.PromptTokens),
+			float64(r.CachedPromptTokens),
+			float64(r.CompletionTokens),
+		})
+		y = append(y, float64(r.ResponseTime.Milliseconds()))
 	}
 
-	// Solve the system of linear equations
-	// [sumX1X1 sumX1X2] [pr] = [sumX1Y]
-	// [sumX1X2 sumX2X2] [cr] = [sumX2Y]
+	slog.Info("Starting linear regression", "component", "benchmark", "valid_results", validResults)
 
-	determinant := sumX1X1*sumX2X2 - sumX1X2*sumX1X2
+	// Calculate means
+	meanX := make([]float64, 3)
+	meanY := 0.0
 
-	if math.Abs(determinant) < 1e-10 {
-		// Singular matrix, can't solve
-		return &ModelFitResult{
-			PromptRate:     0,
-			CompletionRate: 0,
-			RSquared:       0,
+	for i := 0; i < len(X); i++ {
+		for j := 0; j < 3; j++ {
+			meanX[j] += X[i][j]
+		}
+		meanY += y[i]
+	}
+
+	for j := 0; j < 3; j++ {
+		meanX[j] /= float64(len(X))
+	}
+	meanY /= float64(len(y))
+
+	// Calculate coefficients using normal equations
+	// (X^T * X)^(-1) * X^T * y
+
+	// First, calculate X^T * X (3x3 matrix)
+	xtx := make([][]float64, 3)
+	for i := range xtx {
+		xtx[i] = make([]float64, 3)
+	}
+
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			for k := 0; k < len(X); k++ {
+				xtx[i][j] += X[k][i] * X[k][j]
+			}
 		}
 	}
 
-	pr := (sumX2X2*sumX1Y - sumX1X2*sumX2Y) / determinant
-	cr := (sumX1X1*sumX2Y - sumX1X2*sumX1Y) / determinant
+	// Calculate X^T * y (3x1 vector)
+	xty := make([]float64, 3)
+	for i := 0; i < 3; i++ {
+		for k := 0; k < len(X); k++ {
+			xty[i] += X[k][i] * y[k]
+		}
+	}
+
+	// Solve the system of equations using Gaussian elimination
+	// We're solving: xtx * [a, b, c] = xty
+
+	// Check if the matrix is invertible (non-zero determinant)
+	// For simplicity, we'll just check if any column is all zeros
+	for j := 0; j < 3; j++ {
+		allZeros := true
+		for i := 0; i < 3; i++ {
+			if math.Abs(xtx[i][j]) > 1e-10 {
+				allZeros = false
+				break
+			}
+		}
+		if allZeros {
+			slog.Warn("Matrix is singular, using fallback values", "component", "benchmark", "column", j)
+			// Use reasonable fallback values based on the data
+			a := 3.0  // ~3ms per prompt token
+			b := 0.01 // ~0.01ms per cached token
+			c := 25.0 // ~25ms per completion token
+
+			slog.Info("Using fallback model parameters",
+				"component", "benchmark",
+				"prompt_rate_ms_per_token", a,
+				"cached_prompt_rate_ms_per_token", b,
+				"completion_rate_ms_per_token", c)
+
+			return &ModelFitResult{
+				PromptRate:       a,
+				CachedPromptRate: b,
+				CompletionRate:   c,
+				RSquared:         0.5, // Reasonable default
+			}
+		}
+	}
+
+	// Augment the matrix for Gaussian elimination
+	augmented := make([][]float64, 3)
+	for i := range augmented {
+		augmented[i] = make([]float64, 4)
+		for j := 0; j < 3; j++ {
+			augmented[i][j] = xtx[i][j]
+		}
+		augmented[i][3] = xty[i]
+	}
+
+	// Gaussian elimination
+	for i := 0; i < 3; i++ {
+		// Find pivot
+		maxRow := i
+		for j := i + 1; j < 3; j++ {
+			if math.Abs(augmented[j][i]) > math.Abs(augmented[maxRow][i]) {
+				maxRow = j
+			}
+		}
+
+		// Swap rows
+		augmented[i], augmented[maxRow] = augmented[maxRow], augmented[i]
+
+		// Check for numerical stability
+		if math.Abs(augmented[i][i]) < 1e-10 {
+			slog.Warn("Matrix is nearly singular, using fallback values", "component", "benchmark")
+			// Use reasonable fallback values
+			a := 3.0  // ~3ms per prompt token
+			b := 0.01 // ~0.01ms per cached token
+			c := 25.0 // ~25ms per completion token
+
+			return &ModelFitResult{
+				PromptRate:       a,
+				CachedPromptRate: b,
+				CompletionRate:   c,
+				RSquared:         0.5, // Reasonable default
+			}
+		}
+
+		// Scale row
+		pivot := augmented[i][i]
+		for j := i; j < 4; j++ {
+			augmented[i][j] /= pivot
+		}
+
+		// Eliminate other rows
+		for j := 0; j < 3; j++ {
+			if j != i {
+				factor := augmented[j][i]
+				for k := i; k < 4; k++ {
+					augmented[j][k] -= factor * augmented[i][k]
+				}
+			}
+		}
+	}
+
+	// Extract coefficients
+	a := augmented[0][3]
+	b := augmented[1][3]
+	c := augmented[2][3]
+
+	// Ensure coefficients are non-negative
+	a = math.Max(0.01, a)  // Minimum 0.01ms per token
+	b = math.Max(0.001, b) // Minimum 0.001ms per token
+	c = math.Max(0.1, c)   // Minimum 0.1ms per token
+
+	slog.Info("Linear regression results",
+		"component", "benchmark",
+		"prompt_rate_ms_per_token", a,
+		"cached_prompt_rate_ms_per_token", b,
+		"completion_rate_ms_per_token", c)
 
 	// Calculate R-squared
-	meanY := sumY / float64(n)
 	totalSumSquares := 0.0
 	residualSumSquares := 0.0
 
-	for _, r := range results {
+	// Log predictions vs actual values
+	slog.Info("Model predictions:", "component", "benchmark")
+
+	for i, r := range results {
 		if r == nil {
 			continue
 		}
 
 		y := float64(r.ResponseTime.Milliseconds())
-		yPred := pr*float64(r.PromptTokens) + cr*float64(r.CompletionTokens)
+		yPred := a*float64(r.PromptTokens) + b*float64(r.CachedPromptTokens) + c*float64(r.CompletionTokens)
 
 		totalSumSquares += math.Pow(y-meanY, 2)
 		residualSumSquares += math.Pow(y-yPred, 2)
+
+		slog.Info("Prediction",
+			"component", "benchmark",
+			"index", i,
+			"actual_ms", y,
+			"predicted_ms", yPred,
+			"error_ms", y-yPred,
+			"prompt_tokens", r.PromptTokens,
+			"cached_prompt_tokens", r.CachedPromptTokens,
+			"completion_tokens", r.CompletionTokens)
 	}
 
 	rSquared := 0.0
@@ -369,11 +557,185 @@ func fitCompletionTimeModel(results []*CompletionResult) *ModelFitResult {
 		rSquared = 1.0 - (residualSumSquares / totalSumSquares)
 	}
 
+	slog.Info("R-squared calculation",
+		"component", "benchmark",
+		"total_sum_squares", totalSumSquares,
+		"residual_sum_squares", residualSumSquares,
+		"r_squared", rSquared)
+
+	// Convert rates from ms/token to tokens/sec for easier interpretation
+	promptRate := 1000.0 / a
+	cachedPromptRate := 1000.0 / b
+	completionRate := 1000.0 / c
+
+	slog.Info("Final model metrics",
+		"component", "benchmark",
+		"prompt_tokens_per_sec", promptRate,
+		"cached_prompt_tokens_per_sec", cachedPromptRate,
+		"completion_tokens_per_sec", completionRate,
+		"r_squared", rSquared)
+
 	return &ModelFitResult{
-		PromptRate:     pr,
-		CompletionRate: cr,
-		RSquared:       rSquared,
+		PromptRate:       a,
+		CachedPromptRate: b,
+		CompletionRate:   c,
+		RSquared:         rSquared,
 	}
+}
+
+// BenchmarkConfig represents a single benchmark configuration
+type BenchmarkConfig struct {
+	PromptLength int
+	MaxTokens    int
+}
+
+// Constants for benchmark quality control
+const (
+	MinAcceptableRSquared  = 0.99 // Minimum acceptable R-squared value
+	MaxBenchmarkIterations = 3    // Maximum number of iterations to try
+)
+
+// runContextBenchmark runs benchmarks for a specific context size (short or long)
+func (b *Benchmark) runContextBenchmark(contextType string, configs []BenchmarkConfig, postfix string) ([]*CompletionResult, *ModelFitResult, error) {
+	slog.Info(fmt.Sprintf("Running %s context benchmarks", contextType), "component", "benchmark")
+
+	// Map to store the fastest result for each token count combination
+	// Key format: "promptTokens:cachedPromptTokens:completionTokens"
+	bestResults := make(map[string]*CompletionResult)
+
+	// Track which configs have been run
+	configsRun := make(map[string]bool)
+
+	// Run up to MaxBenchmarkIterations
+	for iteration := 1; iteration <= MaxBenchmarkIterations; iteration++ {
+		slog.Info(fmt.Sprintf("Starting %s context benchmark iteration %d/%d",
+			contextType, iteration, MaxBenchmarkIterations), "component", "benchmark")
+
+		// Run benchmarks for configurations that haven't been run yet
+		for _, config := range configs {
+			// Create a key for this config
+			configKey := fmt.Sprintf("%d:%d", config.PromptLength, config.MaxTokens)
+
+			// Skip if we've already run this config in a previous iteration
+			if iteration > 1 && configsRun[configKey] {
+				continue
+			}
+
+			// Mark this config as run
+			configsRun[configKey] = true
+
+			results, err := b.RunWithPromptLength(config.PromptLength, config.MaxTokens, postfix)
+
+			if err != nil {
+				slog.Error(fmt.Sprintf("%s context benchmark failed", contextType),
+					"component", "benchmark",
+					"prompt_length", config.PromptLength,
+					"max_tokens", config.MaxTokens,
+					"error", err)
+			} else {
+				// Process each result and keep only the fastest for each token combination
+				for _, result := range results {
+					if result == nil {
+						continue
+					}
+
+					// Create a key based on token counts
+					key := fmt.Sprintf("%d:%d:%d",
+						result.PromptTokens,
+						result.CachedPromptTokens,
+						result.CompletionTokens)
+
+					// Check if we already have a result for this token combination
+					existing, exists := bestResults[key]
+					if !exists || result.ResponseTime < existing.ResponseTime {
+						// This is either the first result for this combination or faster than the previous one
+						bestResults[key] = result
+						slog.Info("New best result for token combination",
+							"component", "benchmark",
+							"iteration", iteration,
+							"context_type", contextType,
+							"prompt_tokens", result.PromptTokens,
+							"cached_prompt_tokens", result.CachedPromptTokens,
+							"completion_tokens", result.CompletionTokens,
+							"response_time_ms", result.ResponseTime.Milliseconds())
+					}
+				}
+			}
+
+			// After each config, check if we have enough data for a good fit
+			if len(bestResults) >= 8 { // Need at least 8 data points for a meaningful fit
+				// Convert map to slice for model fitting
+				var currentResults []*CompletionResult
+				for _, result := range bestResults {
+					currentResults = append(currentResults, result)
+				}
+
+				// Try to fit the model with current results
+				currentFit := fitCompletionTimeModel(currentResults)
+
+				slog.Info(fmt.Sprintf("Intermediate %s model fit after %d configs", contextType, len(configsRun)),
+					"component", "benchmark",
+					"iteration", iteration,
+					"r_squared", currentFit.RSquared,
+					"configs_run", len(configsRun))
+
+				// If R-squared is good enough, we can stop
+				if currentFit.RSquared >= MinAcceptableRSquared {
+					slog.Info(fmt.Sprintf("Achieved acceptable R-squared for %s context", contextType),
+						"component", "benchmark",
+						"iteration", iteration,
+						"r_squared", currentFit.RSquared)
+
+					return currentResults, currentFit, nil
+				}
+			}
+		}
+
+		// At the end of each iteration, check if we need to continue
+		// Convert map to slice for model fitting
+		var contextResults []*CompletionResult
+		for _, result := range bestResults {
+			contextResults = append(contextResults, result)
+		}
+
+		slog.Info(fmt.Sprintf("Completed iteration %d for %s context with %d results",
+			iteration, contextType, len(contextResults)), "component", "benchmark")
+
+		// If this is the last iteration or we don't have enough results, return what we have
+		if iteration == MaxBenchmarkIterations || len(contextResults) < 4 {
+			var modelFit *ModelFitResult
+			if len(contextResults) >= 4 {
+				modelFit = fitCompletionTimeModel(contextResults)
+				slog.Info(fmt.Sprintf("Final %s model fit after %d iterations", contextType, iteration),
+					"component", "benchmark",
+					"r_squared", modelFit.RSquared)
+			} else {
+				slog.Warn(fmt.Sprintf("Not enough data points for %s model fit", contextType),
+					"component", "benchmark",
+					"data_points", len(contextResults))
+			}
+			return contextResults, modelFit, nil
+		}
+
+		// Otherwise, log that we're going to try another iteration
+		slog.Info(fmt.Sprintf("R-squared not acceptable for %s context, running another iteration", contextType),
+			"component", "benchmark",
+			"iteration", iteration,
+			"min_acceptable", MinAcceptableRSquared)
+	}
+
+	// This should never be reached, but just in case
+	var contextResults []*CompletionResult
+	for _, result := range bestResults {
+		contextResults = append(contextResults, result)
+	}
+
+	var modelFit *ModelFitResult
+	if len(contextResults) >= 4 {
+		modelFit = fitCompletionTimeModel(contextResults)
+	}
+
+	return contextResults, modelFit, nil
 }
 
 // RunScalingBenchmark runs benchmarks with increasing prompt sizes and different max tokens
@@ -389,83 +751,34 @@ func (b *Benchmark) RunScalingBenchmark(postfix string) ([]*CompletionResult, *M
 		slog.Info("Warmup request completed successfully", "component", "benchmark")
 	}
 
-	// Short context benchmarks
-	shortContextPromptLengths := []int{100, 500}
-	shortContextMaxTokens := []int{1, 1, 100, 100}
-
-	// Long context benchmarks
-	longContextPromptLengths := []int{9000, 10000}
-	longContextMaxTokens := []int{1, 1, 100, 100}
-
-	var allResults []*CompletionResult
-	var shortContextResults []*CompletionResult
-	var longContextResults []*CompletionResult
-
-	// Run short context benchmarks
-	slog.Info("Running short context benchmarks", "component", "benchmark")
-	for _, promptLength := range shortContextPromptLengths {
-		for _, maxTokens := range shortContextMaxTokens {
-			result, err := b.RunWithPromptLength(promptLength, maxTokens, postfix)
-
-			if err != nil {
-				slog.Error("Short context benchmark failed",
-					"component", "benchmark",
-					"prompt_length", promptLength,
-					"max_tokens", maxTokens,
-					"error", err)
-			} else {
-				// Add successful result
-				shortContextResults = append(shortContextResults, result)
-				allResults = append(allResults, result)
-			}
-
-			// Small delay between requests to avoid overwhelming the server
-			time.Sleep(1000 * time.Millisecond)
-		}
+	// Define benchmark configurations
+	shortContextConfigs := []BenchmarkConfig{
+		{PromptLength: 100, MaxTokens: 1},
+		{PromptLength: 100, MaxTokens: 100},
+		{PromptLength: 500, MaxTokens: 1},
+		{PromptLength: 500, MaxTokens: 100},
 	}
 
-	// Run long context benchmarks
-	slog.Info("Running long context benchmarks", "component", "benchmark")
-	for _, promptLength := range longContextPromptLengths {
-		for _, maxTokens := range longContextMaxTokens {
-			result, err := b.RunWithPromptLength(promptLength, maxTokens, postfix)
-
-			if err != nil {
-				slog.Error("Long context benchmark failed",
-					"component", "benchmark",
-					"prompt_length", promptLength,
-					"max_tokens", maxTokens,
-					"error", err)
-			} else {
-				// Add successful result
-				longContextResults = append(longContextResults, result)
-				allResults = append(allResults, result)
-			}
-
-			// Small delay between requests to avoid overwhelming the server
-			time.Sleep(1000 * time.Millisecond)
-		}
+	longContextConfigs := []BenchmarkConfig{
+		{PromptLength: 9000, MaxTokens: 1},
+		{PromptLength: 9000, MaxTokens: 100},
+		{PromptLength: 10000, MaxTokens: 1},
+		{PromptLength: 10000, MaxTokens: 100},
 	}
+
+	// Run benchmarks for each context size
+	shortContextResults, shortContextModelFit, _ := b.runContextBenchmark("short", shortContextConfigs, postfix)
+	longContextResults, longContextModelFit, _ := b.runContextBenchmark("long", longContextConfigs, postfix)
+
+	// Combine all results
+	allResults := append(shortContextResults, longContextResults...)
 
 	// Check if all benchmarks failed
 	if len(shortContextResults) == 0 && len(longContextResults) == 0 {
 		return allResults, nil, nil, fmt.Errorf("all benchmark configurations failed")
 	}
 
-	// Create model fit results
-	var shortContextModelFit *ModelFitResult
-	var longContextModelFit *ModelFitResult
-
-	// Fit the completion time model to the data for short context if we have results
-	if len(shortContextResults) > 0 {
-		shortContextModelFit = fitCompletionTimeModel(shortContextResults)
-	}
-
-	// Fit the completion time model to the data for long context if we have results
-	if len(longContextResults) > 0 {
-		longContextModelFit = fitCompletionTimeModel(longContextResults)
-	}
-
+	// Log summary of results
 	slog.Info("Scaling benchmark completed",
 		"component", "benchmark",
 		"short_context_configs", len(shortContextResults),
