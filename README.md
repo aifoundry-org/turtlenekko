@@ -65,7 +65,6 @@ TODO:
 - Add support for text completions endpoint
 - Add `exclude` and other filtering constructs to the parameter matrix
 - Implement web API to run benchmarks with precise control
-- Colored output :)
 
 ## Installation
 

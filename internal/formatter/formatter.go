@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/aifoundry-org/turtlenekko/internal/benchmark"
+	"github.com/aifoundry-org/turtlenekko/internal/terminal"
 )
 
 // JsonResult represents a benchmark result in JSON format
@@ -111,92 +112,122 @@ func FormatJSON(matrixResults []benchmark.MatrixResult, showLocalScore bool) err
 func FormatText(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 	for i, matrixResult := range matrixResults {
 		// Output to console
-		fmt.Printf("\n=== Matrix Combination %d ===\n", i+1)
+		fmt.Printf("\n%s\n", terminal.BoldText(terminal.CyanText(fmt.Sprintf("=== Matrix Combination %d ===", i+1))))
 
 		// Print parameters used
-		fmt.Println("Parameters:")
+		fmt.Println(terminal.BoldText("Parameters:"))
 		for k, v := range matrixResult.Params {
 			if outputFlag, exists := matrixResult.OutputFlags[k]; exists && outputFlag {
-				fmt.Printf("  %s: %s\n", k, v)
+				fmt.Printf("  %s: %s\n", terminal.BoldText(k), v)
 			}
 		}
 
 		if matrixResult.Error != nil {
-			fmt.Printf("Error: %v\n", matrixResult.Error)
+			fmt.Printf("%s: %v\n", terminal.RedText("Error"), matrixResult.Error)
 			continue
 		}
 
 		// Print short context results
-		fmt.Printf("\nShort Context Results:\n")
+		fmt.Printf("\n%s\n", terminal.BoldText(terminal.BlueText("Short Context Results:")))
 		if matrixResult.ShortContextModelFit != nil {
 			shortPromptRate := matrixResult.ShortContextModelFit.PromptRate
 			shortCachedPromptRate := matrixResult.ShortContextModelFit.CachedPromptRate
 			shortCompletionRate := matrixResult.ShortContextModelFit.CompletionRate
 
 			if shortPromptRate > 0 {
-				fmt.Printf("  Prompt processing: %.2f tokens/sec\n",
-					math.Round((1000.0/shortPromptRate)*100)/100)
+				fmt.Printf("  %s: %s tokens/sec\n",
+					terminal.BoldText("Prompt processing"),
+					terminal.GreenText(fmt.Sprintf("%.2f", math.Round((1000.0/shortPromptRate)*100)/100)))
 			} else {
-				fmt.Printf("  Prompt processing: No data\n")
+				fmt.Printf("  %s: %s\n", terminal.BoldText("Prompt processing"), terminal.YellowText("No data"))
 			}
 			
 			if shortCachedPromptRate > 0 {
-				fmt.Printf("  Cached prompt processing: %.2f tokens/sec\n",
-					math.Round((1000.0/shortCachedPromptRate)*100)/100)
+				fmt.Printf("  %s: %s tokens/sec\n",
+					terminal.BoldText("Cached prompt processing"),
+					terminal.GreenText(fmt.Sprintf("%.2f", math.Round((1000.0/shortCachedPromptRate)*100)/100)))
 			} else {
-				fmt.Printf("  Cached prompt processing: No data\n")
+				fmt.Printf("  %s: %s\n", terminal.BoldText("Cached prompt processing"), terminal.YellowText("No data"))
 			}
 
 			if shortCompletionRate > 0 {
-				fmt.Printf("  Completion generation: %.2f tokens/sec\n",
-					math.Round((1000.0/shortCompletionRate)*100)/100)
+				fmt.Printf("  %s: %s tokens/sec\n",
+					terminal.BoldText("Completion generation"),
+					terminal.GreenText(fmt.Sprintf("%.2f", math.Round((1000.0/shortCompletionRate)*100)/100)))
 			} else {
-				fmt.Printf("  Completion generation: No data\n")
+				fmt.Printf("  %s: %s\n", terminal.BoldText("Completion generation"), terminal.YellowText("No data"))
 			}
 
-			fmt.Printf("  Model fit quality (R²): %.2f\n", math.Round(matrixResult.ShortContextModelFit.RSquared*100)/100)
+			rSquared := math.Round(matrixResult.ShortContextModelFit.RSquared*100)/100
+			rSquaredColor := terminal.GreenText
+			if rSquared < 0.9 {
+				rSquaredColor = terminal.YellowText
+			}
+			if rSquared < 0.7 {
+				rSquaredColor = terminal.RedText
+			}
+			fmt.Printf("  %s: %s\n", terminal.BoldText("Model fit quality (R²)"), rSquaredColor(fmt.Sprintf("%.2f", rSquared)))
 
 		} else {
-			fmt.Printf("  No short context data available\n")
+			fmt.Printf("  %s\n", terminal.YellowText("No short context data available"))
 		}
 
 		// Print long context results
-		fmt.Printf("\nLong Context Results:\n")
+		fmt.Printf("\n%s\n", terminal.BoldText(terminal.MagentaText("Long Context Results:")))
 		if matrixResult.LongContextModelFit != nil {
 			longPromptRate := matrixResult.LongContextModelFit.PromptRate
 			longCachedPromptRate := matrixResult.LongContextModelFit.CachedPromptRate
 			longCompletionRate := matrixResult.LongContextModelFit.CompletionRate
 
 			if longPromptRate > 0 {
-				fmt.Printf("  Prompt processing: %.2f tokens/sec\n",
-					math.Round((1000.0/longPromptRate)*100)/100)
+				fmt.Printf("  %s: %s tokens/sec\n",
+					terminal.BoldText("Prompt processing"),
+					terminal.GreenText(fmt.Sprintf("%.2f", math.Round((1000.0/longPromptRate)*100)/100)))
 			} else {
-				fmt.Printf("  Prompt processing: No data\n")
+				fmt.Printf("  %s: %s\n", terminal.BoldText("Prompt processing"), terminal.YellowText("No data"))
 			}
 			
 			if longCachedPromptRate > 0 {
-				fmt.Printf("  Cached prompt processing: %.2f tokens/sec\n",
-					math.Round((1000.0/longCachedPromptRate)*100)/100)
+				fmt.Printf("  %s: %s tokens/sec\n",
+					terminal.BoldText("Cached prompt processing"),
+					terminal.GreenText(fmt.Sprintf("%.2f", math.Round((1000.0/longCachedPromptRate)*100)/100)))
 			} else {
-				fmt.Printf("  Cached prompt processing: No data\n")
+				fmt.Printf("  %s: %s\n", terminal.BoldText("Cached prompt processing"), terminal.YellowText("No data"))
 			}
 
 			if longCompletionRate > 0 {
-				fmt.Printf("  Completion generation: %.2f tokens/sec\n",
-					math.Round((1000.0/longCompletionRate)*100)/100)
+				fmt.Printf("  %s: %s tokens/sec\n",
+					terminal.BoldText("Completion generation"),
+					terminal.GreenText(fmt.Sprintf("%.2f", math.Round((1000.0/longCompletionRate)*100)/100)))
 			} else {
-				fmt.Printf("  Completion generation: No data\n")
+				fmt.Printf("  %s: %s\n", terminal.BoldText("Completion generation"), terminal.YellowText("No data"))
 			}
 
-			fmt.Printf("  Model fit quality (R²): %.2f\n", math.Round(matrixResult.LongContextModelFit.RSquared*100)/100)
+			rSquared := math.Round(matrixResult.LongContextModelFit.RSquared*100)/100
+			rSquaredColor := terminal.GreenText
+			if rSquared < 0.9 {
+				rSquaredColor = terminal.YellowText
+			}
+			if rSquared < 0.7 {
+				rSquaredColor = terminal.RedText
+			}
+			fmt.Printf("  %s: %s\n", terminal.BoldText("Model fit quality (R²)"), rSquaredColor(fmt.Sprintf("%.2f", rSquared)))
 
 			if showLocalScore && matrixResult.LocalScore != nil {
-				fmt.Printf("\nLocalscore Estimate: %.2f\n", *matrixResult.LocalScore)
+				score := *matrixResult.LocalScore
+				scoreColor := terminal.GreenText
+				if score < 7.0 {
+					scoreColor = terminal.YellowText
+				}
+				if score < 5.0 {
+					scoreColor = terminal.RedText
+				}
+				fmt.Printf("\n%s: %s\n", terminal.BoldText("Localscore Estimate"), scoreColor(fmt.Sprintf("%.2f", score)))
 			}
 
 			fmt.Printf("\n")
 		} else {
-			fmt.Printf("  No long context data available\n\n")
+			fmt.Printf("  %s\n\n", terminal.YellowText("No long context data available"))
 		}
 	}
 }
@@ -341,7 +372,7 @@ func FormatCSV(matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 // WriteToFile writes detailed benchmark results to a log file
 func WriteToFile(file *os.File, matrixResults []benchmark.MatrixResult, showLocalScore bool) {
 	for i, matrixResult := range matrixResults {
-		// Output to log file
+		// Output to log file - no colors in file output
 		fmt.Fprintf(file, "\n=== Matrix Combination %d ===\n", i+1)
 
 		// Print parameters used
