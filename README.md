@@ -1,3 +1,5 @@
+![logo](docs/turtlenekko-logo.png)
+
 # Turtlenekko
 
 A benchmarking tool for measuring and comparing performance of LLM inference runtimes.
